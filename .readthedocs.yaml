@@ -1,0 +1,35 @@
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+#
+# ⚠️ READ THE DOCS DOES NOT BUILD FROM THIS REPO. It is private, and the free Read the
+# Docs cannot clone a private repo. It builds from a separate PUBLIC repo holding a copy
+# of docs/ and of this file, which `./docs/publish.sh --push` replaces on every publish.
+# So this file is the source of the public one: change it here, then publish.
+#
+# Locally:
+#
+#   ./docs/build.sh     build the site once and print where it landed
+#   ./docs/serve.sh     live preview that rebuilds as you type
+#   ./docs/publish.sh   copy the docs to the public repo (add --push to send it)
+
+# Required
+version: 2
+
+# Set the OS, Python version, and other tools you might need
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.13"
+
+# Build documentation in the "docs/" directory with Sphinx.
+# `fail_on_warning` stops a site with dead links from publishing — a broken
+# cross-reference fails the build instead of shipping quietly.
+sphinx:
+   configuration: docs/conf.py
+   fail_on_warning: true
+
+# The packages the build needs. Without this, Read the Docs installs a bare
+# Sphinx that cannot read Markdown, and every page fails. See docs/requirements.txt.
+python:
+   install:
+   - requirements: docs/requirements.txt
