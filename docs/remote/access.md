@@ -41,9 +41,10 @@ board already works.
 
 1. The coach starts the session and shares its link — in the video call's chat is fine.
 2. The athlete opens it. Their device is already signed in (or they sign in once).
-3. **The server lets them in only if their login is linked to an athlete who is in one
-   of the training groups taking part in that session.** Everyone else is turned away,
-   logged in or not.
+3. **The server lets them in only if their login is linked to an athlete who is on the
+   session's roster, or in one of the training groups taking part in it** (decided
+   October 14: the roster rule keeps a quick session, which has no group, joinable).
+   Everyone else is turned away, logged in or not.
 4. They land straight on **their** rack screen for that session.
 
 **The link says which session; the login says who you are; the group says whether you
@@ -54,6 +55,30 @@ Remote athletes are not asked which rack they are at. Each is alone with their o
 sensor, so **their device is the rack**. The server gives each athlete a rack slot of
 their own when they join, so two athletes can never land on the same one, and the rack
 screen, check-in and set lifecycle run exactly as they do in the gym.
+
+**Built (October 2026, spec 04):**
+
+- **Joining makes the rack.** Each joining athlete gets a "virtual rack", numbered from
+  10,000 so it can never clash with a gym's rack 1, 2, 3. Joining again gives the same
+  one back; joins for one session take turns, so fifty at once get fifty racks. They
+  are checked in on it through the same step the gym's check-in uses, and **their own
+  sensor** (a sensor now belongs to an athlete) is pointed at it. A group member who
+  wasn't on the roster is added, so the coach's room and report include them.
+- **It is their rack alone.** Online, an athlete may use only their own rack, check in
+  only themselves, and start or finish only their own sets. Nobody else can take
+  control of it, a coach included, and it can never lose its athlete.
+- **The rack follows the login, not a tablet.** A gym rack's controller is the tablet
+  bolted to it; an athlete's rack is controlled by the athlete's own sign-in. So a
+  reload just takes the rack back, **with the set still open**, and no sensor is needed
+  to open it.
+- **Ending the session releases the racks**: open sets are ended and kept, sensors are
+  freed, the racks are removed. Sets, reps and the report are untouched.
+- **The same rack screen.** There is no second screen for remote athletes: on a rack
+  with an owner, the gym's rack screen shows the athlete's name and skips choosing a
+  lifter.
+- **An online athlete sees only themselves in the room.** The session routes a gym
+  tablet reads list everyone (names, plan targets, maxes, status). Online, an athlete
+  asking gets only their own entry; coaches and gym tablets see everyone.
 
 ### 4. Login links: first sign-in and "I forgot" are the same button
 
@@ -81,6 +106,21 @@ password:
 - **The coach sees each athlete's state:** not linked, link sent (expires on a date),
   or linked — and can **unlink**, if the wrong person claimed it.
 
+**Built (October 2026, spec 03):**
+
+- **The secret goes after a `#`** (`https://<school>/login-link#<lookup>.<secret>`). A
+  browser never sends that part to the server, so it never appears in a request log, and
+  the page wipes it from the address bar once read.
+- **Links last 3 days.** Every way a link can fail gets the same answer, and wrong tries
+  are slowed down, so links can't be guessed.
+- **The athlete can keep their username.** The old login is switched off and renamed out
+  of the way rather than deleted; usernames ignore capital letters.
+- **Athletes stay signed in for 30 days** (coaches 7). The screens keep and use an
+  athlete's renewal token; before this, no screen renewed a sign-in, so it would have
+  lasted 8 hours.
+- **Coach login codes** (the same idea for coaches, replacing temporary passwords) were
+  moved to the coach-interface redesign, which rebuilds those screens.
+
 :::{warning}
 **Two links, two rules.** The **session link** is not a secret — it only works for
 athletes who are already linked and in the session's groups — so a group chat is fine.
@@ -92,7 +132,7 @@ that athlete. The coach screen says so beside the button.
 
 | | Coach | Athlete |
 |---|---|---|
-| Created by | the head coach | a coach creates the athlete; the athlete sets the login from a login link |
+| Created by | an administrator | a coach creates the athlete; the athlete sets the login from a login link |
 | Roster, plans, sessions, settings | full control | **none** |
 | Their own rack screen, in a session their group is in | — | yes |
 | Published results of their program | yes | yes — **filtered to themselves by default**, one tap to see everyone |
@@ -102,21 +142,38 @@ the wall in the gym. The fence that matters is **between programs**, and that on
 structural ({doc}`databases`). The coach's hide setting applies online exactly as on
 the wall, so the two can never disagree.
 
+**How the server tells them apart (built October 2026).** Nothing stores a role. A
+login attached to a coach profile is a coach; with the staff flag on, an administrator.
+A login attached to an athlete record is an athlete. A login attached to neither, or
+to both, is refused everywhere, including at sign-in. An athlete's login is refused by
+every coach route, and the coach workspace shows them a short notice instead of
+loading. Archiving an athlete switches their login off at once and keeps their history.
+The reasoning is in {doc}`../journal/apis`.
+
 ### 6. Setting up the coaches
 
-The coach side is not new design — it is being ported from work Braydon did on the
-team repository:
+The coach side is not new design. It is work Braydon did on the team repository,
+brought into this one in October 2026 and built the same way for a gym box and for the
+hosted service:
 
+- **One coach role.** Every coach can see and do everything in the coach workspace.
+  There is no head coach who outranks an assistant; "head coach" is only a label on a
+  training group.
+- **One administrator flag.** It does exactly one thing: an **administrator** can
+  create, reset, deactivate and promote coach logins. More than one coach can have it,
+  and there must always be at least one.
 - **A one-time setup code** printed on the machine itself claims a new installation, so
   the first visitor to the site cannot make themselves the administrator.
-- **No public sign-up.** The head coach creates the other coach logins, with a
-  temporary password that must be changed at first sign-in, and can deactivate, promote
-  or reset them.
+- **No public sign-up.** An administrator creates the other coach logins, each with a
+  temporary password that must be changed at first sign-in. Until it is changed, that
+  login can reach nothing else.
 - **The well-known demo login refuses to exist** outside development. Its password is in
   the repository.
 
-On the hosted service the setup code is read by whoever operates the cluster, not from
-a screen in a gym.
+**On the hosted service the operator hands over the setup code.** Whoever creates the
+installation runs the same command on the cluster and passes the code to that
+program's coach, who types it into the same first-run screen. Nothing about it is
+different online; only who is standing at the machine.
 
 ### 7. The demo is its own installation
 
@@ -171,6 +228,19 @@ them full coach powers over the roster, plans and sessions. The check currently 
 athlete login **on the hosted service**.
 
 **Demo logins inside the real installation.** See section 7.
+
+**The login link's secret in the address path** (`/login-link/<secret>`). Every request
+log on the way would record it. After a `#` it never leaves the athlete's phone.
+
+**Deleting the old login when a new link is used.** The rows that record who made a
+training block or runs a group point at the login; deleting it would break them.
+
+**A second rack screen for remote athletes.** Two copies drift. The gym's screen skips
+choosing a lifter when the rack has an owner, and that one fact is all that differs.
+
+**The gym's "recover" step on an athlete's own rack.** In a gym it ends an abandoned
+set, because a different person may be at the rack. On an athlete's own rack only they
+can be, so a reload simply takes the rack back.
 
 ## What it cost
 

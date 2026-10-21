@@ -133,6 +133,7 @@ An ESP32 + sensor unit on a rack. Identified by node_id; a coach links it to a p
 | Column | Type | Notes |
 |---|---|---|
 | `node_id` | text | **unique**, max 255 |
+| `owner` | link → | → `Athlete`, on delete: `SET_NULL`, optional, reverse: `owned_nodes` |
 | `rack_number` | whole number | optional |
 | `mount_type` | text | max 10, choices: `MOUNT_CHOICES`, default `MOUNT_BAR` |
 | `firmware_version` | text | optional, max 50 |
@@ -181,6 +182,10 @@ A tablet PWA standing at a rack. Its device_id is generated in the browser on fi
 | `device_id` | text | **unique**, max 255 |
 | `rack_number` | whole number | optional |
 | `last_seen` | date + time | set on save |
+
+**Table rules**
+
+- `constraints = [models.UniqueConstraint(fields=['rack_number'], condition=models.Q(rack_number__isnull=False), name='screen_one_per_assigned_rack')]`
 <!-- schema:RackScreen:end -->
 
 
@@ -262,6 +267,8 @@ The server-owned controller lease and transient presentation state for one rack.
 | `latest_color` | text | max 16 |
 | `phase_started_at` | date + time | optional |
 | `updated_at` | date + time | set on save |
+| `owner_athlete` | link → | → `Athlete`, on delete: `SET_NULL`, optional, reverse: `owned_racks` |
+| `session` | link → | → `TrainingSession`, on delete: `SET_NULL`, optional, reverse: `virtual_racks` |
 <!-- schema:RackRuntime:end -->
 
 
@@ -340,6 +347,8 @@ A lifter. Optionally carries an NFC tag id for tap-to-identify at a rack.
 | `created_at` | date + time | set on create |
 | `notes` | long text | — |
 | `is_simulated` | true/false | default `False` |
+| `is_active` | true/false | default `True` |
+| `user` | one-to-one → | → `settings.AUTH_USER_MODEL`, on delete: `SET_NULL`, optional, reverse: `athlete` |
 | `training_groups` | many-to-many → | → `TrainingGroup`, reverse: `athletes` |
 <!-- schema:Athlete:end -->
 
@@ -1251,5 +1260,136 @@ these.
 
 :::::
 
+
+## Unsorted
+
+New tables that have not been filed into a group yet. Add them to `CLUSTERS` in `docs/refresh-schema.py`.
+
+### `InstallationSetup`
+
+Persistent, locked first-run marker; never inferred from a deleted account. Enrollment also needs a secret that only someone with access to the base station itself can obtain, otherwise whoever loads the website first claims the installation. `setup_code_hash` holds a one-way hash of a short, locally-issued code — never the code itself — so a database leak does not hand out the claim token. The code expires and is cleared on first success.
+
+:::::{dropdown} Schema
+
+<!-- schema:InstallationSetup:start -->
+| Column | Type | Notes |
+|---|---|---|
+| `completed_at` | date + time | optional |
+| `setup_code_hash` | text | max 255, default `''` |
+| `setup_code_created_at` | date + time | optional |
+| `setup_code_expires_at` | date + time | optional |
+<!-- schema:InstallationSetup:end -->
+
+<!-- TO FILL IN: move these two lines out of this comment, then retitle
+     the dropdown above from 'Schema' to 'Schema and decisions'.
+
+**Why it exists.** (what this table is for, in one or two sentences)
+
+**Decisions.** (what was chosen here, and what was rejected)
+-->
+
+:::::
+
+### `CoachProfile`
+
+Per-coach account state that is not part of Django's User table. Only `must_change_password` today: an administrator creates a coach with a temporary password, and that flag makes the first sign-in change it before the rest of the app is reachable.
+
+:::::{dropdown} Schema
+
+<!-- schema:CoachProfile:start -->
+| Column | Type | Notes |
+|---|---|---|
+| `user` | one-to-one → | → `auth.User`, on delete: `CASCADE`, reverse: `coach_profile` |
+| `must_change_password` | true/false | default `False` |
+<!-- schema:CoachProfile:end -->
+
+<!-- TO FILL IN: move these two lines out of this comment, then retitle
+     the dropdown above from 'Schema' to 'Schema and decisions'.
+
+**Why it exists.** (what this table is for, in one or two sentences)
+
+**Decisions.** (what was chosen here, and what was rejected)
+-->
+
+:::::
+
+### `AthleteLoginLink`
+
+A one-time link a coach sends an athlete, to make (or remake) their login. Treated like a password: the link itself is never stored, only a one-way hash of its secret part, the same way Django stores passwords. It works once, expires after 3 days, and a newer link cancels it. All of that is checked in services/login_links.py; this table only records what happened.
+
+:::::{dropdown} Schema and decisions
+
+<!-- schema:AthleteLoginLink:start -->
+| Column | Type | Notes |
+|---|---|---|
+| `token_hash` | text | max 128 |
+| `lookup` | text | **unique**, max 16 |
+| `created_at` | date + time | — |
+| `expires_at` | date + time | — |
+| `used_at` | date + time | optional |
+| `cancelled_at` | date + time | optional |
+| `athlete` | link → | → `Athlete`, on delete: `CASCADE`, reverse: `login_links` |
+| `created_by` | link → | → `settings.AUTH_USER_MODEL`, on delete: `SET_NULL`, optional, reverse: `+` |
+<!-- schema:AthleteLoginLink:end -->
+
+**Why it exists.** Athletes never create their own logins. A coach sends a personal
+link, and using it makes the athlete's login. This table records each link (spec 03).
+
+**Decisions.**
+- The link is `<lookup>.<secret>`. `lookup` finds the row directly; the secret is
+  stored only as a hash, so a copy of the database can't be used to claim a login.
+- Every failure (wrong, expired, used, cancelled, unknown) gives the same answer, so
+  nobody can learn which.
+- Using a link switches the old login off and renames it (`<name>~replaced-<id>`), so
+  the athlete can keep their username. The old login row is kept, not deleted.
+- An archived athlete's link stops working, so a link can't switch an archived
+  athlete's login back on.
+- Rejected: storing the link itself; a separate "forgot password" path (a new link
+  does both).
+- **Built on the shared one-time rows** (2026-10-19, spec 14). The first six columns
+  come from `OneTimeSecret`, an abstract model with no table of its own; making,
+  finding and using up the link follow `services/one_time_secrets.py`, which the
+  first-run setup code and sensor claim codes use too. Nothing in this table changed.
+
+:::::
+
+### `SensorClaimCode`
+
+A one-time code an athlete gives their sensor, so the sensor can claim itself. The athlete gets it on their athlete page ("Add my sensor"); the sensor sends it to the school with its ID, and gets its own sensor token back (spec 14). Treated like a password (see OneTimeSecret). It works once, for 15 minutes, and a newer code cancels the older. Checked in services/sensor_claims.py; this table only records what happened.
+
+:::::{dropdown} Schema and decisions
+
+<!-- schema:SensorClaimCode:start -->
+| Column | Type | Notes |
+|---|---|---|
+| `token_hash` | text | max 128 |
+| `lookup` | text | **unique**, max 16 |
+| `created_at` | date + time | — |
+| `expires_at` | date + time | — |
+| `used_at` | date + time | optional |
+| `cancelled_at` | date + time | optional |
+| `athlete` | link → | → `Athlete`, on delete: `CASCADE`, reverse: `sensor_claim_codes` |
+| `sensor` | link → | → `Node`, on delete: `SET_NULL`, optional, reverse: `+` |
+<!-- schema:SensorClaimCode:end -->
+
+**Why it exists.** Online, an athlete adds their own sensor without anyone's help. The
+code is how the school knows the sensor that sends it belongs to that athlete (spec 14).
+
+**Decisions.**
+- A code, not the athlete's account password: the account password never passes
+  through the sensor, and a code can only add a sensor, once.
+- Built on the shared one-time rows (`OneTimeSecret`): only a hash is stored, every
+  failure gives the same answer, and wrong codes are slowed down.
+- 15 minutes: long enough to set a sensor up over USB, short enough that a code left
+  on a screen is worthless.
+- A sensor that already belongs to someone else is refused, and the code stays usable;
+  a coach removes the sensor from its owner first.
+- The sensor's token is not stored here or anywhere in the database. The broker keeps
+  only a salted hash of it (its dynamic security file), and the claim reply is the only
+  time the token itself exists outside the sensor.
+- Rejected: the athlete's account password or its hash on the sensor; the coach
+  typing sensor IDs on the roster (claiming does it).
+
+:::::
 <!-- SCHEMA SECTION END -->
 
